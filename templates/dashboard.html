@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Nimbus Dashboard</title>
+
+  {% load static %}
+
+  <!-- UI Libraries -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; }
+  </style>
+</head>
+
+<body class="bg-base-200 min-h-screen">
+  <!-- Navbar -->
+  <div class="navbar bg-base-100 shadow">
+    <div class="flex-1 px-2">
+      <div class="flex items-center gap-2">
+        <img src="{% static 'img/nimbus-logo.png' %}" alt="Nimbus" width="36" height="36" />
+        <span class="text-xl font-bold">Nimbus</span>
+      </div>
+    </div>
+    <div class="flex-none">
+      <a href="/api/docs/" class="btn btn-ghost">API Docs</a>
+      <a href="/admin/" class="btn btn-ghost">Admin</a>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <main class="container mx-auto p-4 grid grid-cols-1 xl:grid-cols-3 gap-6">
+    <!-- Notes Section -->
+    <section class="xl:col-span-2">
+      <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+          <h2 class="card-title">Notes</h2>
+          <div class="flex gap-2">
+            <input id="title" class="input input-bordered w-full" placeholder="Title">
+            <select id="priority" class="select select-bordered">
+              <option value="1">High</option>
+              <option value="2">Med-High</option>
+              <option value="3" selected>Medium</option>
+              <option value="4">Med-Low</option>
+              <option value="5">Low</option>
+            </select>
+            <button id="create" class="btn btn-primary">Add</button>
+          </div>
+          <textarea id="content" class="textarea textarea-bordered mt-2" placeholder="Content"></textarea>
+
+          <div class="flex items-center gap-2 mt-4">
+            <input id="search" class="input input-bordered" placeholder="Search title/content">
+            <select id="filterPriority" class="select select-bordered">
+              <option value="">All priorities</option>
+              <option value="1">High</option>
+              <option value="2">Med-High</option>
+              <option value="3">Medium</option>
+              <option value="4">Med-Low</option>
+              <option value="5">Low</option>
+            </select>
+            <button id="refreshNotes" class="btn">Refresh</button>
+          </div>
+
+          <div id="notes" class="mt-4 grid gap-3"></div>
+          <div class="join mt-4" id="pagination"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Analytics + GitHub -->
+    <section class="xl:col-span-1 space-y-6">
+      <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+          <h2 class="card-title">Notes per day</h2>
+        <div class="flex gap-2 items-center">
+            <label>Days</label>
+            <input id="days" type="number" value="14" min="3" max="60" class="input input-bordered w-24"/>
+            <button id="refreshChart" class="btn">Refresh</button>
+          </div>
+          <canvas id="chart" height="150"></canvas>
+        </div>
+      </div>
+
+      <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+          <h2 class="card-title">GitHub Lookup</h2>
+          <div class="flex gap-2">
+            <input id="username" class="input input-bordered w-full" placeholder="octocat" value="octocat"/>
+            <button id="lookup" class="btn btn-secondary">Lookup</button>
+          </div>
+          <pre id="ghout" class="mt-2 text-sm"></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer footer-center p-4 bg-base-100 text-base-content">
+    <aside><p>Nimbus • Django + DRF + Chart.js</p></aside>
+  </footer>
+
+  <!-- JS Logic -->
+  <script>
+    // ===== Utility =====
+    function getCookie(name){
+      const value = "; " + document.cookie;
+      const parts = value.split("; " + name + "=");
+      if (parts.length === 2) return parts.pop().split(";").shift();
+    }
+    const CSRF = getCookie("csrftoken");
+    const api = {
+      notes: "/api/notes/",
+      report: "/api/report/daily-notes/",
+      gh: "/api/integration/github-user"
+    };
+
+    // ===== NOTES =====
+    async function listNotes(page=1){
+      const q = new URLSearchParams();
+      const term = document.getElementById("search").value.trim();
+      const pr = document.getElementById("filterPriority").value;
+      if (term) q.set("search", term);
+      if (pr) q.set("priority", pr);
+      q.set("page", page);
+
+      const res = await fetch(api.notes + "?" + q.toString());
+      const data = await res.json();
+      renderNotes(data);
+      renderPagination(data, page);
+    }
+
+    function renderNotes(data){
+      const el = document.getElementById("notes");
+      el.innerHTML = "";
+      (data.results || data).forEach(n => {
+        const card = document.createElement("div");
+        card.className = "card bg-base-200";
+        card.innerHTML =
+          '<div class="card-body">'
+          + '<h3 class="card-title">' + escapeHtml(n.title) + ' <div class="badge">P' + n.priority + '</div></h3>'
+          + '<p class="opacity-80">' + escapeHtml(n.content || "") + '</p>'
+          + '<div class="card-actions justify-end">'
+          +   '<button class="btn btn-outline btn-sm" onclick="editNote(' + n.id + ')">Edit</button>'
+          +   '<button class="btn btn-error btn-sm" onclick="delNote(' + n.id + ')">Delete</button>'
+          + '</div>'
+          + '</div>';
+        el.appendChild(card);
+      });
+    }
+
+    function renderPagination(data, current){
+      const el = document.getElementById("pagination");
+      el.innerHTML = "";
+      if (!data.count) return;
+      const pageSize = data.results.length;
+      const pages = Math.ceil(data.count / pageSize);
+      for (let i = 1; i <= pages; i++){
+        const btn = document.createElement("button");
+        btn.className = "join-item btn " + (i === current ? "btn-active" : "");
+        btn.textContent = String(i);
+        btn.onclick = () => listNotes(i);
+        el.appendChild(btn);
+      }
+    }
+
+    async function createNote(){
+      const title = document.getElementById("title").value.trim();
+      const content = document.getElementById("content").value.trim();
+      const priority = parseInt(document.getElementById("priority").value, 10);
+      if (!title) return alert("Title required");
+
+      await fetch(api.notes, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF },
+        body: JSON.stringify({ title, content, priority })
+      });
+      document.getElementById("title").value = "";
+      document.getElementById("content").value = "";
+      listNotes();
+    }
+
+    async function delNote(id){
+      if (!confirm("Delete note #" + id + "?")) return;
+      await fetch(api.notes + id + "/", { method: "DELETE", headers: { "X-CSRFToken": CSRF } });
+      listNotes();
+    }
+
+    async function editNote(id){
+      const title = prompt("New title?");
+      if (title === null) return;
+      await fetch(api.notes + id + "/", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF },
+        body: JSON.stringify({ title })
+      });
+      listNotes();
+    }
+
+    function escapeHtml(s){
+      if (s === null || s === undefined) return "";
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    // ===== CHART =====
+    async function renderChart(days=14){
+      const res = await fetch(api.report + "?days=" + days);
+      const data = await res.json();
+      const labels = data.map(d => d.date);
+      const counts = data.map(d => d.count);
+      const ctx = document.getElementById("chart").getContext("2d");
+      if (window.__chart) window.__chart.destroy();
+      window.__chart = new Chart(ctx, {
+        type: "line",
+        data: { labels: labels, datasets: [{ label: "Notes per day", data: counts, borderColor: "#3B82F6", tension: 0.3 }] },
+        options: { scales: { y: { beginAtZero: true } } }
+      });
+    }
+
+    // ===== GITHUB =====
+    async function lookupGitHub(){
+      const u = document.getElementById("username").value || "octocat";
+      const res = await fetch(api.gh + "?username=" + encodeURIComponent(u));
+      const data = await res.json();
+      document.getElementById("ghout").textContent = JSON.stringify(data, null, 2);
+    }
+
+    // ===== Bind Buttons =====
+    document.getElementById("create").onclick = createNote;
+    document.getElementById("refreshNotes").onclick = () => listNotes();
+    document.getElementById("refreshChart").onclick = () => renderChart(parseInt(document.getElementById("days").value || "14", 10));
+    document.getElementById("lookup").onclick = lookupGitHub;
+
+    // ===== Initial load =====
+    listNotes();
+    renderChart();
+  </script>
+</body>
+</html>

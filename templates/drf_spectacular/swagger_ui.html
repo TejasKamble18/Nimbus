@@ -1,0 +1,22 @@
+{% extends "drf_spectacular/swagger_ui.html" %}
+{% block extra_styles %}
+<style>
+  body {
+    background: #f5f7fa;
+  }
+  .topbar-wrapper img[alt="Swagger UI"], .topbar-wrapper span {
+    display: none !important;
+  }
+  .topbar-wrapper:before {
+    content: "";
+    display: inline-block;
+    background: url('https://upload.wikimedia.org/wikipedia/commons/a/ad/Placeholder_logo.png') no-repeat center;
+    background-size: 150px;
+    width: 160px;
+    height: 60px;
+  }
+  .topbar {
+    background: linear-gradient(90deg, #4338CA, #6D28D9);
+  }
+</style>
+{% endblock %}

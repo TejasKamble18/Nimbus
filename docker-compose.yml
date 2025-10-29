@@ -1,0 +1,19 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: fsdemo
+    ports: ["5432:5432"]
+  web:
+    build: .
+    command: bash -lc "python manage.py migrate && gunicorn fsdemo.wsgi:application --bind 0.0.0.0:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/fsdemo
+      SECRET_KEY: change-me
+      DEBUG: "False"
+      ALLOWED_HOSTS: "*"
+    ports: ["8000:8000"]
+    depends_on: [db]
